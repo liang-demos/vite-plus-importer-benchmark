@@ -1,0 +1,13 @@
+{
+  "name": "vite-plus-importer-benchmark",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "bench": "node bench.mjs",
+    "smoke": "node bench.mjs --samples=2 --warm=2"
+  },
+  "devDependencies": {
+    "jiti": "2.7.0"
+  },
+  "packageManager": "pnpm@12.11.2"
+}
