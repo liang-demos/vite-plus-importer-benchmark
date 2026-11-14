@@ -10,8 +10,8 @@ import { generateFixtures } from './fixtures.mjs';
 const require = createRequire(import.meta.url);
 const option = (name, fallback) =>
   Number(process.argv.find((arg) => arg.startsWith(`--${name}=`))?.split('=')[1] ?? fallback);
-const samples = option('samples', 20);
-const warm = option('warm', 20);
+const samples = option('samples', 100);
+const warm = option('warm', 100);
 if (![samples, warm].every((n) => Number.isInteger(n) && n > 0))
   throw new Error('samples and warm must be positive integers');
 const modes = ['bundle', 'import', 'oxnode', 'jiti', 'jiti-fs-cache'];
@@ -74,10 +74,14 @@ for (const row of results) {
 }
 const percentile = (values, fraction) =>
   [...values].sort((a, b) => a - b)[Math.ceil(values.length * fraction) - 1];
+const mean = (values) => values.reduce((total, value) => total + value, 0) / values.length;
 const summary = results.map((row) => ({
   fixture: row.fixture,
   mode: row.mode,
   supported: row.supported,
+  wallMeanMs: row.supported ? mean(row.samples.map((s) => s.wallMs)) : null,
+  loadMeanMs: row.supported ? mean(row.samples.map((s) => s.loads[0])) : null,
+  reloadMeanMs: row.warmLoads ? mean(row.warmLoads) : null,
   wallMedianMs: row.supported
     ? percentile(
         row.samples.map((s) => s.wallMs),
@@ -117,4 +121,17 @@ const report = {
 };
 mkdirSync('results', { recursive: true });
 writeFileSync('results/latest.json', `${JSON.stringify(report, null, 2)}\n`);
-console.table(summary);
+// Keep the console comparison in the same orientation as the README.
+console.table(
+  fixtures.map((fixture) =>
+    Object.fromEntries([
+      ['fixture', fixture],
+      ...summary
+        .filter((row) => row.fixture === fixture)
+        .map((row) => [
+          row.mode,
+          row.supported ? `${row.wallMeanMs.toFixed(1)} ms` : 'Unsupported enum',
+        ]),
+    ]),
+  ),
+);

@@ -4,6 +4,43 @@ Experiment for [vite-plus#3380](https://github.com/voidzero-dev/vite-plus/issues
 Uses the existing oxnode module runner exposed as `vite-plus/importer` by the
 [POC branch](https://github.com/liangmiQwQ/vite-plus/tree/liang/codex/3380-oxc-native-config-poc).
 
+## Results: average time over 100 runs
+
+Read **across each row** to compare the approaches on the same configuration.
+Every timed cell is the **arithmetic mean of 100 independent process runs**,
+in **milliseconds (ms); lower is faster**. All samples are included, with no
+outlier removal. These replace the earlier 20-run median results.
+
+| Configuration                 | Current: Vite + Rolldown | Pure `await import` | Oxnode importer | jiti, disk cache off | jiti, disk cache primed |
+| ----------------------------- | -----------------------: | ------------------: | --------------: | -------------------: | ----------------------: |
+| Simple config                 |                 101.1 ms |             52.0 ms |         39.9 ms |             110.5 ms |                 43.0 ms |
+| 100 modules + `defineConfig`  |                 147.7 ms |            163.9 ms |        150.9 ms |             312.0 ms |                154.2 ms |
+| Enum dependency + `__dirname` |                 101.2 ms |    Unsupported enum |         40.3 ms |             116.4 ms |                 43.3 ms |
+
+**What the time means:** starting a new Node process, importing the loader,
+loading the config, validating the returned config/plugin, and exiting. It is
+not just transform time and not the time until a Vite dev server is ready.
+The first three approach columns are the main comparison; jiti is a reference.
+
+- **Simple config:** an object export with one callable plugin.
+- **100 modules + `defineConfig`:** imports Vite+'s `defineConfig` and 100 local TypeScript files.
+- **Enum dependency + `__dirname`:** checks syntax/compatibility that plain import does not support. A failure is not counted as a fast result.
+- **jiti cache primed:** its filesystem transform cache was populated before timing; the other jiti column disables that cache.
+
+Oxnode takes about 61% less time than bundling for the simple config in this run.
+For the 100-module scenario it takes about 2% more time, so this experiment does
+not show a general improvement for larger configs. The graph scenario also adds
+`defineConfig` package-import work; it does not isolate per-module transform cost.
+
+Measured on 2026-11-14 with Node 24.22.3, Apple M5 Pro, macOS arm64,
+Vite 8.3.8, Rolldown 1.2.19, and jiti 2.7.0. The POC commit is
+[`ccba9699a`](https://github.com/liangmiQwQ/vite-plus/commit/ccba9699a042d6b4e53b828cbcb2862dd2b1049a).
+
+[Raw samples and statistics](results/latest.json) also contain the mean of the
+loading call alone, mean repeated-load time (100 repetitions in one process),
+medians, and p95. Those separate metrics are deliberately not mixed into the
+startup table above. Results vary by machine.
+
 ## Reproduce
 
 Build that branch following Vite+'s CONTRIBUTING.md (`just init`, `just build`).
@@ -28,7 +65,7 @@ Setup stages built CLI/core JavaScript in real `node_modules` directories and li
 their dependencies to the checkout installation. It avoids treating a symlinked
 Vite+ checkout as local TypeScript source, which would distort importer timings.
 Re-run setup after rebuilding the POC. The importer has no registry release yet.
-`node bench.mjs --samples=30 --warm=30` changes the default 20 samples per case.
+`vp node bench.mjs --samples=100 --warm=100` explicitly selects the new defaults: 100 fresh-process samples and 100 repeated loads per supported case.
 Run from this repository's root, on an idle machine, after builds finish.
 
 ## What is measured
@@ -70,40 +107,14 @@ samples**. Node compile caching and inherited `NODE_OPTIONS` are disabled. Built
 and published JavaScript packages may still use Node's cache within a process.
 Generated fixtures and the dedicated jiti cache stay inside ignored directories.
 
-`results/latest.json` contains all raw samples, medians, p95, runtime/hardware
+`results/latest.json` contains all raw samples, arithmetic means, medians, p95, runtime/hardware
 metadata, dependency versions, and the staged Vite+ commit. Results vary by machine.
-
-## Recorded result
-
-Measured on 2026-11-14 with Node 24.22.3, Apple M5 Pro, macOS arm64;
-20 samples per supported case, Vite 8.3.8, Rolldown 1.2.19, jiti 2.7.0.
-The POC commit is [`ccba9699a`](https://github.com/liangmiQwQ/vite-plus/commit/ccba9699a042d6b4e53b828cbcb2862dd2b1049a).
-
-Median fresh-process wall time in milliseconds (lower is better):
-
-| Fixture | Vite + Rolldown | Plain import | Oxnode importer | jiti, no disk cache | jiti, primed disk cache |
-| --- | ---: | ---: | ---: | ---: | ---: |
-| minimal | 98.1 | 50.6 | 38.2 | 107.5 | 41.3 |
-| graph | 142.2 | 158.8 | 146.2 | 299.4 | 147.9 |
-| compat | 98.9 | Unsupported enum | 39.4 | 113.8 | 43.0 |
-
-Oxnode reduces minimal-config startup by about 61% versus bundling in this run,
-but the 100-module graph is about 3% slower. Its results are close to jiti with a
-primed filesystem cache. Plain import fails on the enum compatibility fixture.
-This supports exploring the importer, but does not establish a universal startup
-improvement or justify changing Vite's default loader.
-
-The graph also imports Vite+'s `defineConfig`, so comparing it with `minimal`
-changes both graph size and package-import work. These are representative
-scenarios, not a controlled estimate of per-module transform cost.
-
-See [raw samples and load/reload/p95 statistics](results/latest.json).
 
 ## Validation
 
 The harness performs compatibility assertions before timings and validates every
 successful load, including calling the returned plugin function. Unexpected
-failures abort the run. The 20-sample run completed successfully.
+failures abort the run. The 100-sample run completed successfully (1,400 timed fresh-process runs across the 14 supported combinations).
 
 The POC's public-API regression test verifies enum dependencies, ESM `__dirname`,
 decorator runtime helpers, callable plugins, dependency edits with caching disabled,
