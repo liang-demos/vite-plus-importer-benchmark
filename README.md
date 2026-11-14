@@ -13,9 +13,9 @@ outlier removal. These replace the earlier 20-run median results.
 
 | Configuration                 | Current: Vite + Rolldown | Pure `await import` | Oxnode importer | jiti, disk cache off | jiti, disk cache primed |
 | ----------------------------- | -----------------------: | ------------------: | --------------: | -------------------: | ----------------------: |
-| Simple config                 |                 101.1 ms |             52.0 ms |         39.9 ms |             110.5 ms |                 43.0 ms |
-| 100 modules + `defineConfig`  |                 147.7 ms |            163.9 ms |        150.9 ms |             312.0 ms |                154.2 ms |
-| Enum dependency + `__dirname` |                 101.2 ms |    Unsupported enum |         40.3 ms |             116.4 ms |                 43.3 ms |
+| Simple config                 |                 103.9 ms |             53.1 ms |         40.6 ms |             111.7 ms |                 43.7 ms |
+| 100 modules + `defineConfig`  |                 114.6 ms |            133.0 ms |        118.2 ms |             278.2 ms |                121.3 ms |
+| Enum dependency + `__dirname` |                 103.1 ms |    Unsupported enum |         41.5 ms |             118.5 ms |                 44.1 ms |
 
 **What the time means:** starting a new Node process, importing the loader,
 loading the config, validating the returned config/plugin, and exiting. It is
@@ -27,10 +27,16 @@ The first three approach columns are the main comparison; jiti is a reference.
 - **Enum dependency + `__dirname`:** checks syntax/compatibility that plain import does not support. A failure is not counted as a fast result.
 - **jiti cache primed:** its filesystem transform cache was populated before timing; the other jiti column disables that cache.
 
-Oxnode takes about 61% less time than bundling for the simple config in this run.
-For the 100-module scenario it takes about 2% more time, so this experiment does
-not show a general improvement for larger configs. The graph scenario also adds
-`defineConfig` package-import work; it does not isolate per-module transform cost.
+The earlier setup accidentally loaded two Vite copies through `defineConfig` and
+Vitest's peer dependency. This table supersedes those results: setup now stages
+Vitest as well and asserts that both consumers resolve the same Vite core.
+The old measurements remain in [commit 7777a4d](https://github.com/liang-demos/vite-plus-importer-benchmark/tree/7777a4d).
+
+For the 100-module case, total process time is 114.6 ms for bundling and 118.2 ms
+for oxnode, but initialization plus config loading takes about 80 ms for both.
+The small total-time gap is outside the worker's timer, not evidence of slower
+TypeScript transformation. See the [bottleneck analysis](ANALYSIS.md) for the phase
+breakdown, JavaScript controls, parser prewarming, and importer instrumentation.
 
 Measured on 2026-11-14 with Node 24.22.3, Apple M5 Pro, macOS arm64,
 Vite 8.3.8, Rolldown 1.2.19, and jiti 2.7.0. The POC commit is
@@ -61,7 +67,7 @@ vp node bench.mjs --samples=2 --warm=2
 vp node bench.mjs
 ```
 
-Setup stages built CLI/core JavaScript in real `node_modules` directories and links
+Setup stages built CLI/core and Vitest JavaScript in real `node_modules` directories and links
 their dependencies to the checkout installation. It avoids treating a symlinked
 Vite+ checkout as local TypeScript source, which would distort importer timings.
 Re-run setup after rebuilding the POC. The importer has no registry release yet.
